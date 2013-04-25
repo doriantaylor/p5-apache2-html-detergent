@@ -5,12 +5,14 @@ all_from 'lib/Apache2/HTML/Detergent.pm';
 author   q{Dorian Taylor <dorian@cpan.org>};
 license  'apache';
 
+requires 'HTML::Detergent';
+requires 'Apache2::ModSSL';
+requires 'Apache2::TrapSubRequest';
+
 build_requires 'Test::More';
 build_requires 'Apache::Test';
 
-clean_files 't/TEST t/SMOKE'
-
-requires 'HTML::Detergent';
+clean_files 't/TEST t/SMOKE';
 
 require Apache::TestMM;
 Apache::TestMM->import(qw(test clean));

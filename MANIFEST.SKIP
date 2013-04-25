@@ -1,0 +1,6 @@
+\.hg
+\.git
+.*\.bak
+^Makefile$
+^t/SMOKE$
+6t/TEST$

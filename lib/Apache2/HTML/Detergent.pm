@@ -6,19 +6,35 @@ use warnings FATAL => 'all';
 
 # Apache stuff
 
-use Apache2::Const -compile => qw(OK OR_ALL ITERATE TAKE12 TAKE2 );
+use base qw(Apache2::Filter);
 
-use Apache2::Filter     ();
-use Apache2::RequestRec ();
-use Apache2::CmdParms   ();
-use Apache2::Module     ();
-use Apache2::Directive  ();
-use APR::Table          ();
+use Apache2::Const -compile => qw(OK DECLINED);
+
+use Apache2::Log         ();
+use Apache2::FilterRec   ();
+use Apache2::RequestRec  ();
+use Apache2::RequestUtil ();
+use Apache2::Connection  ();
+use Apache2::Response    ();
+use Apache2::ServerRec   ();
+use Apache2::CmdParms    ();
+use Apache2::Module      ();
+use Apache2::Directive   ();
+use Apache2::ModSSL      ();
+
+use APR::Table   ();
+use APR::Bucket  ();
+use APR::Brigade ();
+
+# my contribution
+use Apache2::TrapSubRequest ();
 
 # non-Apache stuff
 
-use HTML::Detergent         ();
-use HTML::Detergent::Config ();
+use URI ();
+use IO::Scalar ();
+use HTML::Detergent                  ();
+use Apache2::HTML::Detergent::Config;
 
 =head1 NAME
 
@@ -31,65 +47,6 @@ Version 0.01
 =cut
 
 our $VERSION = '0.01';
-
-our @DIRECTIVES = (
-    {
-        name         => 'DetergentTypes',
-        req_override => Apache2::Const::OR_ALL,
-        args_how     => Apache2::Const::ITERATE,
-        errmsg       => 'DetergentTypes type/1 [ type/2 ...]',
-        func         => sub {
-            my ($self, $params, $type) = @_;
-            $self->{types}{$type} = 1;
-        },
-    },
-    {
-        name         => 'DetergentMatch',
-        req_override => Apache2::Const::OR_ALL,
-        args_how     => Apache2::Const::TAKE12,
-        errmsg       => 'DetergentMatch /xpath [ /uri/path/of.xsl ]',
-        func         => sub {
-            my ($self, $params, $xpath, $xsl) = @_;
-            $self->{match}{$xpath} = $xsl;
-        },
-    },
-    {
-        name         => 'DetergentLink',
-        req_override => Apache2::Const::OR_ALL,
-        args_how     => Apache2::Const::TAKE2,
-        errmsg       => 'DetergentLink rel href',
-        func         => sub {
-            my ($self, $params, $rel, $href) = @_;
-            my $x = $self->{link}{$rel} ||= [];
-            push @$x, $href;
-        },
-    },
-    {
-        name         => 'DetergentMeta',
-        req_override => Apache2::Const::OR_ALL,
-        args_how     => Apache2::Const::TAKE2,
-        errmsg       => 'DetergentMeta name content',
-        func         => sub {
-            my ($self, $params, $name, $content) = @_;
-            my $x = $self->{meta}{$name} ||= [];
-            push @$x, $content;
-        },
-    },
-);
-
-sub DIR_CREATE {
-    my ($class, $params) = @_;
-
-    HTML::Detergent::Config->new;
-}
-
-sub DIR_MERGE {
-    my ($old, $new) = @_;
-
-    HTML::Detergent::Config->merge($old, $new);
-}
-
-Apache2::Module::add(__PACKAGE__ . '::Config', \@DIRECTIVES);
 
 =head1 SYNOPSIS
 
@@ -120,10 +77,127 @@ Apache2::Module::add(__PACKAGE__ . '::Config', \@DIRECTIVES);
 =cut
 
 sub handler : FilterRequestHandler {
-    my $f = shift;
+    my $f  = shift;
     my $r = $f->r;
+    my $c = $r->connection;
 
-    $f->print($doc->toString(1));
+    #$r->log->debug("HURR DERR " . $r->content_type);
+    
+    #unless ($r->is_initial_req) {
+    #    $r->log->error("NOT AN INITIAL REQUEST TO " . $r->uri);
+    #}
+
+    #unless ($r->status == 200) {
+    #    $r->log->error("STATUS IS " . $r->status);
+    #}
+
+    my $class = __PACKAGE__ . '::Config';
+
+    my $config = Apache2::Module::get_config
+        ($class, $r->server, $r->per_dir_config) ||
+            Apache2::Module::get_config($class, $r->server);
+
+    unless ($config) {
+        $r->log->crit("Cannot find config from $class!");
+        return Apache2::Const::DECLINED;
+    }
+
+
+    #if ($r->is_initial_req) {
+        #$r->log->debug($r->status . ' ' . $r->filename);
+        #require Data::Dumper;
+        #$r->log->debug(Data::Dumper::Dumper($config));
+    #    $r->log->debug($config->type_matches($r->content_type));
+    #}
+
+
+    my $type = $r->content_type;
+    if ($r->is_initial_req and $r->status == 200
+            and $config->type_matches($type)) {
+        $r->log->debug("$type matches");
+
+        #$r->log->debug($icb);
+
+        my $content = $f->ctx;
+        $content    = '' unless defined $content;
+        while ($f->read(my $buf, 4096)) {
+            $content .= $buf;
+        }
+
+        if ($f->seen_eos) {
+            # this is where we hack the content
+
+            # set up the input callbacks with subreq voodoo
+            my $icb = $config->callback;
+            $icb->register_callbacks([
+                sub {
+                    # MATCH
+                    return $_[0] =~ m!^/!;
+                },
+                sub {
+                    # OPEN
+                    my $uri  = shift;
+                    $r->log->debug("opening XML at $uri");
+                    my $subr = $r->lookup_uri($uri);
+                    my $data = '';
+                    $subr->run_trapped(\$data);
+                    my $io = IO::Scalar->new(\$data);
+                    # HACK
+                    \$io;
+                },
+                sub {
+                    # READ
+                    my ($io, $len) = @_;
+                    # HACK
+                    my $fh = $$io;
+                    my $buf;
+                    $fh->read($buf, $len);
+                    $buf;
+                },
+                sub {
+                    # CLOSE
+                    1;
+                },
+            ]);
+
+            my $scrubber = HTML::Detergent->new($config);
+
+            #$r->log->debug($content);
+
+            # $r->headers_in->get('Host') || $r->get_server_name;
+            my $host   = $r->hostname;
+            my $scheme = $c->is_https ? 'https' :  'http';
+            my $port   = $r->get_server_port;
+
+            my $uri = URI->new
+                (sprintf '%s://%s:%d%s', $scheme,
+                 $host, $port, $r->unparsed_uri)->canonical;
+            $r->log->debug($uri);
+
+            my $doc = $scrubber->process($content, $uri);
+            $doc->setEncoding('utf-8');
+
+            $r->content_type(sprintf '%s; charset=utf-8', $type);
+            #$r->log->debug($r->content_encoding || 'identity');
+            #$r->log->debug($r->headers_in->get('Content-Encoding'));
+
+            # reuse content
+            $content = $doc->toString(1);
+            use bytes;
+            #        $r->log->debug(bytes::length($buf));
+            $r->set_content_length(bytes::length($content));
+
+            $f->print($content);
+        }
+        else {
+            $f->ctx($content);
+        }
+
+        Apache2::Const::OK;
+    }
+
+    #$f->print($doc->toString(1));
+    Apache2::Const::DECLINED;
 }
 
 =head1 AUTHOR
