@@ -122,6 +122,7 @@ sub DIR_CREATE {
 
 sub DIR_MERGE {
     my ($old, $new) = @_;
+    %{$new->types} = (%{$old->types}, %{$new->types});
     __PACKAGE__->merge($old, $new);
 }
 
@@ -140,7 +141,7 @@ has types => (
 # apache stuff
 
 sub set_type {
-    my ($self, $params, $type) = @_;
+    my ($self, $type) = @_;
     $type =~ s!^\s*([^/]+/[^/;]+).*!\L$1!;
     $self->types->{$type} = 1;
 }

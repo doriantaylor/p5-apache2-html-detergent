@@ -2,6 +2,8 @@ LoadModule proxy_module @src_dir@/mod_proxy.so
 LoadModule proxy_http_module @src_dir@/mod_proxy_http.so
 LoadModule proxy_connect_module @src_dir@/mod_proxy_connect.so
 
+AddType application/xml .xml
+
 PerlLoadModule Apache2::CondProxy
 PerlLoadModule Apache2::HTML::Detergent
 
@@ -13,3 +15,5 @@ PerlOutputFilterHandler Apache2::HTML::Detergent
 
 DetergentMatch "//html:div[@id='col2']" "/iai.xsl"
 #DetergentMatch "//html:div[1]"
+DetergentMatch "/html:html/html:body/*"
+DetergentTypes text/html application/xhtml+xml application/xml
