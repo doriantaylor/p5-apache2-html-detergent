@@ -81,16 +81,6 @@ sub handler : FilterRequestHandler {
     my $r = $f->r;
     my $c = $r->connection;
 
-    #$r->log->debug("HURR DERR " . $r->content_type);
-    
-    #unless ($r->is_initial_req) {
-    #    $r->log->error("NOT AN INITIAL REQUEST TO " . $r->uri);
-    #}
-
-    #unless ($r->status == 200) {
-    #    $r->log->error("STATUS IS " . $r->status);
-    #}
-
     my $class = __PACKAGE__ . '::Config';
 
     my $config = Apache2::Module::get_config
@@ -105,35 +95,27 @@ sub handler : FilterRequestHandler {
     # store the context; initial content type, payload
     my $ctx;
     unless ($ctx = $f->ctx) {
-        $ctx = [$r->content_type, ''];
+        # turns out some things don't have a type!
+        $ctx = [$r->content_type || 'application/octet-stream', ''];
         $f->ctx($ctx);
-
-        # that screws up the bucket read
-        #$r->set_content_length(undef);
     }
 
     # get this before changing it
     my $type = $ctx->[0];
 
+    unless ($config->type_matches($type)) {
+        $r->log->debug("$type doesn't match");
+        return Apache2::Const::DECLINED;
+    }
+
+    # application/xml is the most reliable content type to
+    # deliver to browsers that use XSLT.
     if ($config->xslt) {
-        $r->log->debug('forcing application/xml');
+        $r->log->debug("forcing $type -> application/xml");
         $r->content_type('application/xml; charset=utf-8');
     }
 
-
-    #if ($r->is_initial_req) {
-        #$r->log->debug($r->status . ' ' . $r->filename);
-        #require Data::Dumper;
-        #$r->log->debug(Data::Dumper::Dumper($config));
-    #    $r->log->debug($config->type_matches($r->content_type));
-    #}
-
-
-    if ($r->is_initial_req and $r->status == 200
-            and $config->type_matches($type)) {
-        $r->log->debug("$type matches");
-
-        #$r->log->debug($icb);
+    if ($r->is_initial_req and $r->status == 200) {
 
         my $content = $ctx->[1];
         $content    = '' unless defined $content;
@@ -142,6 +124,7 @@ sub handler : FilterRequestHandler {
         }
 
         if ($f->seen_eos) {
+
             # this is where we hack the content
 
             # set up the input callbacks with subreq voodoo

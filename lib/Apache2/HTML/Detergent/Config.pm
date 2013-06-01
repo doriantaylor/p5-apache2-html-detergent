@@ -123,6 +123,7 @@ sub DIR_CREATE {
 sub DIR_MERGE {
     my ($old, $new) = @_;
     %{$new->types} = (%{$old->types}, %{$new->types});
+    $new->xslt($old->xslt) unless defined $new->xslt;
     __PACKAGE__->merge($old, $new);
 }
 
