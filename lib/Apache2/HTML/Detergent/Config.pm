@@ -3,7 +3,7 @@ package Apache2::HTML::Detergent::Config;
 use strict;
 use warnings FATAL => 'all';
 
-use Apache2::Const -compile => qw(OR_ALL ITERATE TAKE12 TAKE2);
+use Apache2::Const -compile => qw(OR_ALL ITERATE TAKE1 TAKE12 TAKE2);
 
 use Apache2::CmdParms   ();
 use Apache2::Module     ();
@@ -15,7 +15,7 @@ use APR::Table          ();
 use Moose;
 use namespace::autoclean;
 
-use MooseX::Types::Moose qw(HashRef);
+use MooseX::Types::Moose qw(Maybe Str HashRef);
 
 extends 'HTML::Detergent::Config';
 
@@ -33,6 +33,13 @@ BEGIN {
             #             my ($self, $params, $type) = @_;
             #             #$self->{types}{$type} = 1;
             #         },
+        },
+        {
+            name         => 'DetergentXSLT',
+            req_override => Apache2::Const::OR_ALL,
+            args_how     => Apache2::Const::TAKE1,
+            errmsg       => 'DetergentXSLT /path/to.xsl',
+            func         => '_set_xslt',
         },
         {
             name         => 'DetergentMatch',
@@ -84,6 +91,11 @@ BEGIN {
 sub _set_type {
     my ($self, undef, @rest) = @_;
     $self->set_type(@rest);
+}
+
+sub _set_xslt {
+    my ($self, undef, $path) = @_;
+    $self->xslt($path);
 }
 
 sub _add_match {
@@ -143,6 +155,14 @@ sub type_matches {
     #warn Data::Dumper::Dumper($self->types);
     return $self->types->{$type};
 }
+
+has xslt => (
+    is      => 'rw',
+    isa     => Maybe[Str],
+    lazy    => 1,
+    default => sub { undef },
+);
+
 
 __PACKAGE__->meta->make_immutable;
 

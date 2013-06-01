@@ -8,7 +8,7 @@ use warnings FATAL => 'all';
 
 use base qw(Apache2::Filter);
 
-use Apache2::Const -compile => qw(OK DECLINED);
+use Apache2::Const -compile => qw(OK DECLINED HTTP_BAD_GATEWAY);
 
 use Apache2::Log         ();
 use Apache2::FilterRec   ();
@@ -31,9 +31,9 @@ use Apache2::TrapSubRequest ();
 
 # non-Apache stuff
 
-use URI ();
-use IO::Scalar ();
-use HTML::Detergent                  ();
+use URI             ();
+use IO::Scalar      ();
+use HTML::Detergent ();
 use Apache2::HTML::Detergent::Config;
 
 =head1 NAME
@@ -102,6 +102,24 @@ sub handler : FilterRequestHandler {
         return Apache2::Const::DECLINED;
     }
 
+    # store the context; initial content type, payload
+    my $ctx;
+    unless ($ctx = $f->ctx) {
+        $ctx = [$r->content_type, ''];
+        $f->ctx($ctx);
+
+        # that screws up the bucket read
+        #$r->set_content_length(undef);
+    }
+
+    # get this before changing it
+    my $type = $ctx->[0];
+
+    if ($config->xslt) {
+        $r->log->debug('forcing application/xml');
+        $r->content_type('application/xml; charset=utf-8');
+    }
+
 
     #if ($r->is_initial_req) {
         #$r->log->debug($r->status . ' ' . $r->filename);
@@ -111,14 +129,13 @@ sub handler : FilterRequestHandler {
     #}
 
 
-    my $type = $r->content_type;
     if ($r->is_initial_req and $r->status == 200
             and $config->type_matches($type)) {
         $r->log->debug("$type matches");
 
         #$r->log->debug($icb);
 
-        my $content = $f->ctx;
+        my $content = $ctx->[1];
         $content    = '' unless defined $content;
         while ($f->read(my $buf, 4096)) {
             $content .= $buf;
@@ -174,10 +191,32 @@ sub handler : FilterRequestHandler {
                  $host, $port, $r->unparsed_uri)->canonical;
             $r->log->debug($uri);
 
+            if ($type =~ m!/.*xml!i) {
+                $r->log->debug("Attempting to use XML parser for $uri");
+                $content = eval {
+                    XML::LibXML->load_xml
+                          (string => $content, recover => 1, no_network => 1) };
+                if ($@) {
+                    $r->log->error($@);
+                    return Apache2::Const::HTTP_BAD_GATEWAY;
+                }
+            }
+
             my $doc = $scrubber->process($content, $uri);
             $doc->setEncoding('utf-8');
 
-            $r->content_type(sprintf '%s; charset=utf-8', $type);
+            if (defined $config->xslt) {
+                my $pi = $doc->createProcessingInstruction
+                    ('xml-stylesheet', sprintf 'type="text/xsl" href="%s"',
+                     $config->xslt);
+
+                if ($doc->documentElement) {
+                    $doc->insertBefore($pi, $doc->documentElement);
+                }
+            }
+            else {
+                $r->content_type(sprintf '%s; charset=utf-8', $type);
+            }
             #$r->log->debug($r->content_encoding || 'identity');
             #$r->log->debug($r->headers_in->get('Content-Encoding'));
 
@@ -190,7 +229,8 @@ sub handler : FilterRequestHandler {
             $f->print($content);
         }
         else {
-            $f->ctx($content);
+            # XXX probably not necessary
+            $ctx->[1] = $content;
         }
 
         Apache2::Const::OK;
