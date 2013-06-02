@@ -77,7 +77,8 @@ our $VERSION = '0.02';
 =cut
 
 sub handler : FilterRequestHandler {
-    my $f  = shift;
+    my $f = shift;
+    #my ($f, $bb)  = @_;
     my $r = $f->r;
     my $c = $r->connection;
 
@@ -116,6 +117,8 @@ sub handler : FilterRequestHandler {
     }
 
     if ($r->is_initial_req and $r->status == 200) {
+        # get rid of content-length
+        $r->headers_out->unset('Content-Length');
 
         my $content = $ctx->[1];
         $content    = '' unless defined $content;
