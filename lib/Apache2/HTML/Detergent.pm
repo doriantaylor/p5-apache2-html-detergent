@@ -9,6 +9,7 @@ use warnings FATAL => 'all';
 use base qw(Apache2::Filter);
 
 use Apache2::Const -compile => qw(OK DECLINED HTTP_BAD_GATEWAY);
+use APR::Const     -compile => qw(SUCCESS);
 
 use Apache2::Log         ();
 use Apache2::FilterRec   ();
@@ -77,8 +78,8 @@ our $VERSION = '0.02';
 =cut
 
 sub handler : FilterRequestHandler {
-    my $f = shift;
-    #my ($f, $bb)  = @_;
+    #my $f = shift;
+    my ($f, $bb)  = @_;
     my $r = $f->r;
     my $c = $r->connection;
 
@@ -109,6 +110,8 @@ sub handler : FilterRequestHandler {
         return Apache2::Const::DECLINED;
     }
 
+    #$r->headers_out->set('Transfer-Encoding', 'chunked');
+
     # application/xml is the most reliable content type to
     # deliver to browsers that use XSLT.
     if ($config->xslt) {
@@ -117,113 +120,139 @@ sub handler : FilterRequestHandler {
     }
 
     if ($r->is_initial_req and $r->status == 200) {
-        # get rid of content-length
-        $r->headers_out->unset('Content-Length');
+        # BEGIN BUCKET
+        until ($bb->is_empty) {
+            my $b = $bb->first;
+            $b->remove;
 
-        my $content = $ctx->[1];
-        $content    = '' unless defined $content;
-        while ($f->read(my $buf, 4096)) {
-            $content .= $buf;
-        }
+            if ($b->is_eos) {
+                # this is where that xml code goes
+                $bb->destroy;
+                return _filter_content($f, $config, $ctx);
+            }
 
-        if ($f->seen_eos) {
-
-            # this is where we hack the content
-
-            # set up the input callbacks with subreq voodoo
-            my $icb = $config->callback;
-            $icb->register_callbacks([
-                sub {
-                    # MATCH
-                    return $_[0] =~ m!^/!;
-                },
-                sub {
-                    # OPEN
-                    my $uri  = shift;
-                    $r->log->debug("opening XML at $uri");
-                    my $subr = $r->lookup_uri($uri);
-                    my $data = '';
-                    $subr->run_trapped(\$data);
-                    my $io = IO::Scalar->new(\$data);
-                    # HACK
-                    \$io;
-                },
-                sub {
-                    # READ
-                    my ($io, $len) = @_;
-                    # HACK
-                    my $fh = $$io;
-                    my $buf;
-                    $fh->read($buf, $len);
-                    $buf;
-                },
-                sub {
-                    # CLOSE
-                    1;
-                },
-            ]);
-
-            my $scrubber = HTML::Detergent->new($config);
-
-            #$r->log->debug($content);
-
-            # $r->headers_in->get('Host') || $r->get_server_name;
-            my $host   = $r->hostname;
-            my $scheme = $c->is_https ? 'https' :  'http';
-            my $port   = $r->get_server_port;
-
-            my $uri = URI->new
-                (sprintf '%s://%s:%d%s', $scheme,
-                 $host, $port, $r->unparsed_uri)->canonical;
-            $r->log->debug($uri);
-
-            if ($type =~ m!/.*xml!i) {
-                $r->log->debug("Attempting to use XML parser for $uri");
-                $content = eval {
-                    XML::LibXML->load_xml
-                          (string => $content, recover => 1, no_network => 1) };
-                if ($@) {
-                    $r->log->error($@);
-                    return Apache2::Const::HTTP_BAD_GATEWAY;
+            if ($b->read(my $data)) {
+                if ($ctx->[1] eq '') {
+                    # here is where we would double-check the mime type
                 }
+                $ctx->[1] .= $data;
             }
-
-            my $doc = $scrubber->process($content, $uri);
-            $doc->setEncoding('utf-8');
-
-            if (defined $config->xslt) {
-                my $pi = $doc->createProcessingInstruction
-                    ('xml-stylesheet', sprintf 'type="text/xsl" href="%s"',
-                     $config->xslt);
-
-                if ($doc->documentElement) {
-                    $doc->insertBefore($pi, $doc->documentElement);
-                }
-            }
-            else {
-                $r->content_type(sprintf '%s; charset=utf-8', $type);
-            }
-            #$r->log->debug($r->content_encoding || 'identity');
-            #$r->log->debug($r->headers_in->get('Content-Encoding'));
-
-            # reuse content
-            $content = $doc->toString(1);
-            use bytes;
-            #        $r->log->debug(bytes::length($buf));
-            $r->set_content_length(bytes::length($content));
-
-            $f->print($content);
         }
-        else {
-            # XXX probably not necessary
-            $ctx->[1] = $content;
-        }
+        $bb->destroy;
+        # END BUCKET
 
-        Apache2::Const::OK;
+        return Apache2::Const::OK;
     }
 
-    #$f->print($doc->toString(1));
     Apache2::Const::DECLINED;
+}
+
+sub _filter_content {
+    my ($f, $config, $ctx) = @_;
+    my $r = $f->r;
+    my $c = $r->connection;
+
+    my ($type, $content) = @$ctx;
+
+    # this is where we hack the content
+
+    # set up the input callbacks with subreq voodoo
+    my $icb = $config->callback;
+    $icb->register_callbacks([
+        sub {
+            # MATCH
+            return $_[0] =~ m!^/!;
+        },
+        sub {
+            # OPEN
+            my $uri  = shift;
+            $r->log->debug("opening XML at $uri");
+            my $subr = $r->lookup_uri($uri);
+            my $data = '';
+            $subr->run_trapped(\$data);
+            my $io = IO::Scalar->new(\$data);
+            # HACK: the callback infrastructure doesn't like the globref
+            \$io;
+        },
+        sub {
+            # READ
+            my ($io, $len) = @_;
+            # HACK once again
+            my $fh = $$io;
+            my $buf;
+            $fh->read($buf, $len);
+            $buf;
+        },
+        sub {
+            # CLOSE
+            1;
+        },
+    ]);
+
+    my $scrubber = HTML::Detergent->new($config);
+
+    # $r->headers_in->get('Host') || $r->get_server_name;
+    my $host   = $r->hostname;
+    my $scheme = $c->is_https ? 'https' :  'http';
+    my $port   = $r->get_server_port;
+
+    my $uri = URI->new
+        (sprintf '%s://%s:%d%s', $scheme,
+         $host, $port, $r->unparsed_uri)->canonical;
+    $r->log->debug($uri);
+
+    if ($type =~ m!/.*xml!i) {
+        $r->log->debug("Attempting to use XML parser for $uri");
+        $content = eval {
+            XML::LibXML->load_xml
+                  (string => $content, recover => 1, no_network => 1) };
+        if ($@) {
+            $r->log->error($@);
+            return Apache2::Const::HTTP_BAD_GATEWAY;
+        }
+    }
+
+    my $doc = $scrubber->process($content, $uri);
+    $doc->setEncoding('utf-8');
+
+    if (defined $config->xslt) {
+        my $pi = $doc->createProcessingInstruction
+            ('xml-stylesheet', sprintf 'type="text/xsl" href="%s"',
+             $config->xslt);
+
+        if ($doc->documentElement) {
+            $doc->insertBefore($pi, $doc->documentElement);
+        }
+    }
+    else {
+        $r->content_type(sprintf '%s; charset=utf-8', $type);
+    }
+    #$r->log->debug($r->content_encoding || 'identity');
+    #$r->log->debug($r->headers_in->get('Content-Encoding'));
+
+    # reuse content
+    $content = $doc->toString(1);
+
+    # explicitly get rid of these big objects
+    undef $scrubber;
+    undef $doc;
+    undef $config;
+
+    # now deal with the rest
+    use bytes;
+    #        $r->log->debug(bytes::length($buf));
+    $r->set_content_length(bytes::length($content));
+
+    my $new_bb = APR::Brigade->new($c->pool, $c->bucket_alloc);
+    my $b = APR::Bucket->new($new_bb->bucket_alloc, $content);
+    $new_bb->insert_tail($b);
+    $new_bb->insert_tail
+        (APR::Bucket::eos_create($new_bb->bucket_alloc));
+
+    my $rv = $f->next->pass_brigade($new_bb);
+    return $rv unless $rv = APR::Const::SUCCESS;
+
+    Apache2::Const::OK;
 }
 
 =head1 AUTHOR
