@@ -5,6 +5,7 @@ all_from 'lib/Apache2/HTML/Detergent.pm';
 author   q{Dorian Taylor <dorian@cpan.org>};
 license  'apache';
 
+requires 'mod_perl2';
 requires 'HTML::Detergent';
 requires 'Apache2::ModSSL';
 requires 'Apache2::TrapSubRequest';
