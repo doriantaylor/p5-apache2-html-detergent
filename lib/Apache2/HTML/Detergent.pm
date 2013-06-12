@@ -215,13 +215,23 @@ sub _filter_content {
     my $doc = $scrubber->process($content, $uri);
     $doc->setEncoding('utf-8');
 
+    my $root = $doc->documentElement;
+    if ($root and lc $root->localName eq 'html') {
+        # XML_DTD_NODE
+        # $and not grep { $_->nodeType == 14 } $doc->childNodes) {
+        $doc->removeInternalSubset;
+        $doc->removeExternalSubset;
+        $doc->createExternalSubset('html', undef, undef);
+        $doc->createInternalSubset('html', undef, undef);
+    }
+
     if (defined $config->xslt) {
         my $pi = $doc->createProcessingInstruction
             ('xml-stylesheet', sprintf 'type="text/xsl" href="%s"',
              $config->xslt);
 
-        if ($doc->documentElement) {
-            $doc->insertBefore($pi, $doc->documentElement);
+        if ($root) {
+            $doc->insertBefore($pi, $root);
         }
     }
     else {
@@ -250,7 +260,7 @@ sub _filter_content {
         (APR::Bucket::eos_create($new_bb->bucket_alloc));
 
     my $rv = $f->next->pass_brigade($new_bb);
-    return $rv unless $rv = APR::Const::SUCCESS;
+    return $rv unless $rv == APR::Const::SUCCESS;
 
     Apache2::Const::OK;
 }

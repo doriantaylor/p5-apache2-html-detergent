@@ -1,5 +1,15 @@
 package Apache2::HTML::Detergent::Config;
 
+=head1 NAME
+
+Apache2::HTML::Detergent::Config - Configuration for Apache2::HTML::Detergent
+
+=head1 DESCRIPTION
+
+This configuration module is not accessed directly.
+
+=cut
+
 use strict;
 use warnings FATAL => 'all';
 
@@ -29,10 +39,6 @@ BEGIN {
             args_how     => Apache2::Const::ITERATE,
             errmsg       => 'DetergentTypes type/1 [ type/2 ...]',
             func         => '_set_type',
-            #         func         => sub {
-            #             my ($self, $params, $type) = @_;
-            #             #$self->{types}{$type} = 1;
-            #         },
         },
         {
             name         => 'DetergentXSLT',
@@ -47,12 +53,6 @@ BEGIN {
             args_how     => Apache2::Const::TAKE12,
             errmsg       => 'DetergentMatch /xpath [ /uri/path/of.xsl ]',
             func         => '_add_match',
-            #         func         => sub {
-            #             warn 'lol';
-
-            #             my ($self, $params, $xpath, $xsl) = @_;
-            #             #$self->{match}{$xpath} = $xsl;
-            #         },
         },
         {
             name         => 'DetergentLink',
@@ -60,11 +60,6 @@ BEGIN {
             args_how     => Apache2::Const::TAKE2,
             errmsg       => 'DetergentLink rel href',
             func         => '_add_link',
-            #         func         => sub {
-            #             my ($self, $params, $rel, $href) = @_;
-            #             my $x = $self->{link}{$rel} ||= [];
-            #             push @$x, $href;
-            #         },
         },
         {
             name         => 'DetergentMeta',
@@ -72,11 +67,6 @@ BEGIN {
             args_how     => Apache2::Const::TAKE2,
             errmsg       => 'DetergentMeta name content',
             func         => '_add_meta',
-            #         func         => sub {
-            #             my ($self, $params, $name, $content) = @_;
-            #             my $x = $self->{meta}{$name} ||= [];
-            #             push @$x, $content;
-            #         },
         },
     );
 
@@ -132,12 +122,40 @@ sub DIR_MERGE {
 
 # Moose stuff
 
+=head1 METHODS
+
+Aside from those accessors inherited from L<HTML::Detergent::Config>,
+there are the following methods:
+
+=head2 types
+
+MIME types affected by the module.
+
+=cut
+
 has types => (
     is      => 'rw',
     isa     => HashRef,
     lazy    => 1,
     default => sub { { 'text/html' => 1, 'application/xhtml+xml' => 1 } },
 );
+
+=head2 xslt
+
+A path to an XSLT stylesheet.
+
+=cut
+
+has xslt => (
+    is      => 'rw',
+    isa     => Maybe[Str],
+    lazy    => 1,
+    default => sub { undef },
+);
+
+=head2 set_type
+
+=cut
 
 # apache stuff
 
@@ -146,6 +164,10 @@ sub set_type {
     $type =~ s!^\s*([^/]+/[^/;]+).*!\L$1!;
     $self->types->{$type} = 1;
 }
+
+=head2 type_matches
+
+=cut
 
 sub type_matches {
     my ($self, $type) = @_;
@@ -158,14 +180,10 @@ sub type_matches {
     return $self->types->{$type};
 }
 
-has xslt => (
-    is      => 'rw',
-    isa     => Maybe[Str],
-    lazy    => 1,
-    default => sub { undef },
-);
+=head2 COPYRIGHT & LICENSE
 
+=cut
 
 __PACKAGE__->meta->make_immutable;
 
-1;
+1; # End of Apache2::HTML::Detergent::Config

@@ -19,11 +19,14 @@ META.yml
 MYMETA.json
 MYMETA.yml
 README
-t/00-load.t
 t/boilerplate.t
 t/conf/extra.last.conf.in
+t/htdocs/.htaccess
 t/htdocs/about.html
+t/htdocs/foo.aspx
 t/htdocs/iai.xsl
+t/htdocs/index.html
+t/htdocs/test.xml
 t/manifest.t
 t/pod-coverage.t
 t/pod.t
