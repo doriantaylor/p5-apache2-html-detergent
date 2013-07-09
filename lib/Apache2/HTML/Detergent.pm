@@ -32,10 +32,15 @@ use Apache2::TrapSubRequest ();
 
 # non-Apache stuff
 
-use URI             ();
-use IO::Scalar      ();
-use HTML::Detergent ();
+use URI               ();
+use Encode            ();
+use Encode::Detect    ();
+use IO::Scalar        ();
+use HTML::Detergent   ();
 use Apache2::HTML::Detergent::Config;
+
+#use Encode::Guess     ();
+#use Encode::Detect::Detector ();
 
 =head1 NAME
 
@@ -43,11 +48,11 @@ Apache2::HTML::Detergent - Clean the gunk off HTML documents on the fly
 
 =head1 VERSION
 
-Version 0.04
+Version 0.05
 
 =cut
 
-our $VERSION = '0.04';
+our $VERSION = '0.05';
 
 =head1 SYNOPSIS
 
@@ -98,7 +103,11 @@ sub handler : FilterRequestHandler {
     my $ctx;
     unless ($ctx = $f->ctx) {
         # turns out some things don't have a type!
-        $ctx = [$r->content_type || 'application/octet-stream', ''];
+        my $x = $r->content_type || '';
+        my ($t, $c) =
+            ($x =~ /^\s*([^;]*)(?:;.*?charset\s*=\s*['"]*([^'"]+)['"]*?)?/i);
+
+        $ctx = [$t || 'application/octet-stream', ''];
         $f->ctx($ctx);
     }
 
@@ -119,25 +128,34 @@ sub handler : FilterRequestHandler {
         $r->content_type('application/xml; charset=utf-8');
     }
 
-    if ($r->is_initial_req and $r->status == 200) {
+    # XXX will we need to restore $r->status == 200 to this condition?
+    if ($r->is_initial_req) {
         # BEGIN BUCKET
         until ($bb->is_empty) {
             my $b = $bb->first;
-            $b->remove;
 
             if ($b->is_eos) {
-                # this is where that xml code goes
+                # no further processing if the brigade only contains EOS
+                return Apache2::Const::DECLINED if $ctx->[1] eq '';
+
+                # nuke the brigade
                 $bb->destroy;
+                # this is where that xml code goes
                 return _filter_content($f, $config, $ctx);
             }
 
             if ($b->read(my $data)) {
                 if ($ctx->[1] eq '') {
-                    # here is where we would double-check the mime type
+                    # XXX here is where we would double-check the mime type
                 }
                 $ctx->[1] .= $data;
             }
+
+            # remove this bucket only if it isn't EOS
+            $b->remove;
         }
+
+        # destroy the brigade only after exiting the loop
         $bb->destroy;
         # END BUCKET
 
@@ -201,17 +219,22 @@ sub _filter_content {
          $host, $port, $r->unparsed_uri)->canonical;
     $r->log->debug($uri);
 
+    my $utf8 = Encode::decode(Detect => $content);
+    $content = $utf8 if defined $utf8 and ($content ne '' and $utf8 ne '');
+    undef $utf8;
+
     if ($type =~ m!/.*xml!i) {
         $r->log->debug("Attempting to use XML parser for $uri");
         $content = eval {
             XML::LibXML->load_xml
                   (string => $content, recover => 1, no_network => 1) };
         if ($@) {
-            $r->log->error($@);
+            $r->log->error("Loading $uri failed: $@");
             return Apache2::Const::HTTP_BAD_GATEWAY;
         }
     }
 
+    # note $content might be an XML::LibXML::Document
     my $doc = $scrubber->process($content, $uri);
     $doc->setEncoding('utf-8');
 
