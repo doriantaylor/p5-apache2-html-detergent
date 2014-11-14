@@ -48,11 +48,11 @@ Apache2::HTML::Detergent - Clean the gunk off HTML documents on the fly
 
 =head1 VERSION
 
-Version 0.05
+Version 0.06
 
 =cut
 
-our $VERSION = '0.05';
+our $VERSION = '0.06';
 
 =head1 SYNOPSIS
 
@@ -210,7 +210,7 @@ sub _filter_content {
     my $scrubber = HTML::Detergent->new($config);
 
     # $r->headers_in->get('Host') || $r->get_server_name;
-    my $host   = $r->hostname;
+    my $host   = $r->hostname || $r->get_server_name;
     my $scheme = $c->is_https ? 'https' :  'http';
     my $port   = $r->get_server_port;
 
@@ -249,12 +249,26 @@ sub _filter_content {
     }
 
     if (defined $config->xslt) {
-        my $pi = $doc->createProcessingInstruction
-            ('xml-stylesheet', sprintf 'type="text/xsl" href="%s"',
-             $config->xslt);
+        # check for existing xslt
+        my $found;
+        for my $child ($doc->childNodes) {
+            if ($child->nodeType == 7
+                    && lc($child->nodeName) eq 'xml-stylesheet'
+                        && lc($child->getData) =~ /xsl/) {
+                $found = $child;
+                last;
+            }
+        }
 
-        if ($root) {
-            $doc->insertBefore($pi, $root);
+        # TODO: config directive to override existing XSLT PI?
+        unless ($found) {
+            my $pi = $doc->createProcessingInstruction
+                ('xml-stylesheet', sprintf 'type="text/xsl" href="%s"',
+                 $config->xslt);
+
+            if ($root) {
+                $doc->insertBefore($pi, $root);
+            }
         }
     }
     else {
