@@ -266,8 +266,10 @@ sub _filter_content {
                 ('xml-stylesheet', sprintf 'type="text/xsl" href="%s"',
                  $config->xslt);
 
-            if ($root) {
-                $doc->insertBefore($pi, $root);
+            my @c = grep { $_->nodeType == 1 or $_->nodeType == 14 }
+                $doc->childNodes;
+            if (@c) {
+                $doc->insertBefore($pi, $c[0]);
             }
         }
     }
